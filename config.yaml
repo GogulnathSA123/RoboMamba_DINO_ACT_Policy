@@ -1,0 +1,30 @@
+# Configuration for DINOv2 + RoboMamba + ACT Policy Training
+
+dataset:
+  repo_id: "Gogul99/300_episode"
+  cameras:
+    - "observation.images.front"
+    - "observation.images.wrist"
+  state_key: "observation.state"
+  action_key: "action"
+  raw_image_size: [480, 640, 3]   # Original LeRobot dataset camera resolution (H, W, C)
+  model_input_size: [224, 224]    # Resized to 224x224 for DINOv2 ViT patch tokenization
+
+model:
+  dino_backbone: "dinov2_vits14"  # Options: dinov2_vits14 (small, fast), dinov2_vitb14 (base)
+  freeze_dino: true              # Freeze DINOv2 backbone for fast training and low memory
+  d_model: 512                   # Mamba and ACT feature dimension
+  n_mamba_layers: 4              # Number of Mamba SSM layers
+  kl_weight: 10.0                # CVAE KL divergence weight
+  chunk_size: 16                 # Action prediction horizon
+  state_dim: 6                   # Arm state dimension (SO-101 joints)
+  action_dim: 6                  # Action output dimension (SO-101 joints)
+
+training:
+  batch_size: 16
+  num_epochs: 100
+  learning_rate: 1.0e-4
+  weight_decay: 1.0e-4
+  num_workers: 4
+  device: "cuda"
+  save_dir: "checkpoints"
