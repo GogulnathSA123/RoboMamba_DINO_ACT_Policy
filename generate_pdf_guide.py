@@ -246,7 +246,9 @@ def build_pdf(filename):
     story.append(Paragraph("C. Action Chunking Transformer (ACT) & CVAE Decoder", heading2_style))
     story.append(Paragraph(
         "ACT solves the error accumulation problem in closed-loop manipulation by predicting a multi-step chunk of "
-        "<b>16 future actions</b> simultaneously. The Conditional Variational Autoencoder (CVAE) models non-deterministic human demonstrations.",
+        "<b>16 future actions</b> simultaneously. Our implementation aligns precisely with the original DETR-VAE design:<br/>"
+        "• <b>CVAE Encoder</b>: Uses a learned <code>cls_embed</code> token, projects proprioception, and applies a registered sinusoidal <code>pos_table</code> before encoding. A single linear projection outputs <code>latent_dim * 2</code> parameters to sample <i>z</i> via reparameterization.<br/>"
+        "• <b>Transformer Decoder</b>: Prepend projected latent <i>z</i> and proprioception to visual memory. A learned <code>additional_pos_embed</code> provides positional embedding for context tokens. Action prediction uses a single linear <code>action_head</code> over cross-attended queries.",
         body_style
     ))
 
