@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import wandb
 
 from dataset.hf_dataset import DINOv2LeRobotDataset
 from models.policy import DINOv2RoboMambaACTPolicy
@@ -20,12 +21,20 @@ def train():
         cfg = yaml.safe_load(f)
 
     device = torch.device(cfg["training"]["device"] if torch.cuda.is_available() else "cpu")
-    print(f"=== Starting DINOv2 + RoboMamba + ACT Training on {device} ===")
+    use_amp = (device.type == "cuda")
+    print(f"=== Starting DINOv2 + RoboMamba + ACT Training on {device} (AMP: {use_amp}) ===")
 
     save_dir = cfg["training"]["save_dir"]
     os.makedirs(save_dir, exist_ok=True)
 
-    # 1. Dataset & DataLoader
+    # Initialize Weights & Biases
+    wandb.init(
+        project="RoboMamba_DINO_ACT_Policy",
+        config=cfg,
+        name=f"run_{cfg['model']['dino_backbone']}_mamba_{cfg['model']['n_mamba_layers']}",
+    )
+
+    # 1. Dataset & DataLoader (yields raw, unnormalized data)
     dataset = DINOv2LeRobotDataset(
         repo_id=cfg["dataset"]["repo_id"],
         camera_keys=cfg["dataset"]["cameras"],
@@ -40,7 +49,7 @@ def train():
         pin_memory=True,
     )
 
-    # Save dataset statistics for inference normalization
+    # Save dataset statistics for reference/backup
     stats_path = os.path.join(save_dir, "dataset_stats.pth")
     torch.save(dataset.stats, stats_path)
     print(f"Dataset normalization stats saved to '{stats_path}'.")
@@ -55,6 +64,16 @@ def train():
         action_dim=cfg["model"]["action_dim"],
         chunk_size=cfg["model"]["chunk_size"],
     ).to(device)
+
+    # Initialize policy normalization buffers with dataset statistics
+    model.state_mean.copy_(dataset.stats["state_mean"])
+    model.state_std.copy_(dataset.stats["state_std"])
+    model.action_mean.copy_(dataset.stats["action_mean"])
+    model.action_std.copy_(dataset.stats["action_std"])
+    print("Policy normalization buffers initialized successfully.")
+
+    # Watch model gradients
+    wandb.watch(model, log="all", log_freq=100)
 
     # 3. Optimizer & Scheduler
     optimizer = torch.optim.AdamW(
@@ -71,7 +90,11 @@ def train():
     kl_weight = float(cfg["model"]["kl_weight"])
     best_loss = float("inf")
 
+    # AMP GradScaler
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
     # 4. Training Loop
+    global_step = 0
     for epoch in range(1, cfg["training"]["num_epochs"] + 1):
         model.train()
         total_epoch_loss = 0.0
@@ -81,41 +104,67 @@ def train():
         pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{cfg['training']['num_epochs']}")
         for batch in pbar:
             imgs = batch["images"].to(device)       # [B, N_cams, 3, 224, 224]
-            state = batch["state"].to(device)       # [B, state_dim]
-            actions = batch["action"].to(device)   # [B, chunk_size, action_dim]
+            state = batch["state"].to(device)       # [B, state_dim] (raw)
+            actions = batch["action"].to(device)   # [B, chunk_size, action_dim] (raw)
 
             optimizer.zero_grad()
 
-            pred_actions, mu, logvar = model(imgs, state, actions)
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                # Returns normalized actions during training
+                pred_actions_norm, mu, logvar = model(imgs, state, actions)
 
-            # Compute L1 Action Reconstruction Loss
-            l1_loss = l1_loss_fn(pred_actions, actions)
+                # Normalize target actions manually for computing L1 loss
+                actions_norm = (actions - model.action_mean) / model.action_std
 
-            # Compute CVAE KL Divergence Loss
-            kl_loss = compute_kl_divergence(mu, logvar)
+                # Compute L1 Action Reconstruction Loss
+                l1_loss = l1_loss_fn(pred_actions_norm, actions_norm)
 
-            loss = l1_loss + kl_weight * kl_loss
-            loss.backward()
+                # Compute CVAE KL Divergence Loss
+                kl_loss = compute_kl_divergence(mu, logvar)
+
+                loss = l1_loss + kl_weight * kl_loss
+
+            scaler.scale(loss).backward()
 
             # Gradient Clipping
+            scaler.unscale_(optimizer)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
-            optimizer.step()
+
+            scaler.step(optimizer)
+            scaler.update()
 
             total_epoch_loss += loss.item()
             total_l1_loss += l1_loss.item()
             total_kl_loss += kl_loss.item()
+
+            # Log step-level metrics
+            wandb.log({
+                "train/step_loss": loss.item(),
+                "train/step_l1_loss": l1_loss.item(),
+                "train/step_kl_loss": kl_loss.item(),
+                "train/lr": optimizer.param_groups[0]["lr"],
+            }, step=global_step)
 
             pbar.set_postfix({
                 "loss": f"{loss.item():.4f}",
                 "l1": f"{l1_loss.item():.4f}",
                 "kl": f"{kl_loss.item():.4f}",
             })
+            global_step += 1
 
         scheduler.step()
 
         avg_loss = total_epoch_loss / len(dataloader)
         avg_l1 = total_l1_loss / len(dataloader)
         avg_kl = total_kl_loss / len(dataloader)
+
+        # Log epoch-level metrics
+        wandb.log({
+            "train/epoch_loss": avg_loss,
+            "train/epoch_l1_loss": avg_l1,
+            "train/epoch_kl_loss": avg_kl,
+            "epoch": epoch,
+        }, step=global_step)
 
         print(f"Epoch {epoch} Summary | Total Loss: {avg_loss:.4f} | L1 Loss: {avg_l1:.4f} | KL Loss: {avg_kl:.4f}")
 
@@ -125,11 +174,13 @@ def train():
             best_path = os.path.join(save_dir, "best_model.pt")
             torch.save(model.state_dict(), best_path)
             print(f"Saved new best model checkpoint to '{best_path}'.")
+            wandb.save(best_path)
 
         # Save Latest Checkpoint
         latest_path = os.path.join(save_dir, "latest_model.pt")
         torch.save(model.state_dict(), latest_path)
 
+    wandb.finish()
     print("=== Training Complete ===")
 
 if __name__ == "__main__":

@@ -47,23 +47,42 @@ class TemporalEnsembleBuffer:
 
 
 class DINOv2PolicyConnector:
-    """Inference Connector for evaluating DINOv2 + RoboMamba + ACT in Isaac Sim."""
+    """Inference Connector for evaluating DINOv2 + RoboMamba + ACT in Isaac Sim or Hardware."""
 
-    def __init__(self, checkpoint_path=None, stats_path=None, cfg_path=None, device="cuda"):
+    def __init__(self, checkpoint_path=None, cfg_path=None, device="cuda"):
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
-        
         base_dir = os.path.dirname(__file__)
+
+        # Set fallback local paths
         if cfg_path is None:
             cfg_path = os.path.join(base_dir, "config.yaml")
-        if stats_path is None:
-            stats_path = os.path.join(base_dir, "checkpoints", "dataset_stats.pth")
         if checkpoint_path is None:
             checkpoint_path = os.path.join(base_dir, "checkpoints", "best_model.pt")
 
+        # Check if checkpoint_path is a Hugging Face repository ID (e.g. "Gogul99/Mamaba_Dino_ACT")
+        if checkpoint_path and not os.path.exists(checkpoint_path) and "/" in checkpoint_path:
+            hf_repo_id = checkpoint_path
+            print(f"'{hf_repo_id}' is not a local path. Attempting to download from Hugging Face Hub...")
+            try:
+                from huggingface_hub import hf_hub_download
+                # Download model weights
+                local_checkpoint = hf_hub_download(repo_id=hf_repo_id, filename="best_model.pt")
+                checkpoint_path = local_checkpoint
+                print(f"Successfully downloaded checkpoint to '{checkpoint_path}'")
+                
+                # Attempt to download config.yaml from repository
+                try:
+                    local_config = hf_hub_download(repo_id=hf_repo_id, filename="config.yaml")
+                    cfg_path = local_config
+                    print(f"Successfully downloaded configuration to '{cfg_path}'")
+                except Exception:
+                    print("config.yaml not found on Hub. Falling back to local configuration file.")
+            except Exception as e:
+                print(f"Error fetching from Hugging Face Hub: {e}. Reverting to local search.")
+
+        # Load Configuration
         with open(cfg_path, "r") as f:
             self.cfg = yaml.safe_load(f)
-
-        self.stats = torch.load(stats_path, map_location=self.device)
 
         # Build Model
         self.policy = DINOv2RoboMambaACTPolicy(
@@ -76,11 +95,13 @@ class DINOv2PolicyConnector:
             chunk_size=self.cfg["model"]["chunk_size"],
         ).to(self.device)
 
+        # Load Weights
         if os.path.exists(checkpoint_path):
             print(f"Loading policy checkpoint from '{checkpoint_path}'...")
             state_dict = torch.load(checkpoint_path, map_location=self.device)
             self.policy.load_state_dict(state_dict)
             self.policy.eval()
+            print("Successfully loaded model weights and normalization buffers.")
         else:
             print(f"Warning: Checkpoint '{checkpoint_path}' not found! Policy running with random weights.")
 
@@ -92,16 +113,6 @@ class DINOv2PolicyConnector:
     def reset(self):
         self.ensemble.reset()
 
-    def normalize_state(self, state_tensor):
-        mean = self.stats["state_mean"].to(self.device)
-        std = self.stats["state_std"].to(self.device)
-        return (state_tensor - mean) / std
-
-    def unnormalize_action(self, action_tensor):
-        mean = self.stats["action_mean"].to(self.device)
-        std = self.stats["action_std"].to(self.device)
-        return action_tensor * std + mean
-
     def get_action(self, current_t, raw_images, raw_state):
         """
         Input:
@@ -109,7 +120,7 @@ class DINOv2PolicyConnector:
             raw_images: List of camera arrays or tensors [front_img, wrist_img]
             raw_state: Array or tensor of joint positions [state_dim]
         Output:
-            action: Unnormalized action vector [action_dim]
+            action: Unnormalized raw action vector [action_dim]
         """
         # Process images
         processed_imgs = []
@@ -144,18 +155,15 @@ class DINOv2PolicyConnector:
         else:
             raw_state = raw_state.to(self.device).float()
 
-        norm_state = self.normalize_state(raw_state).unsqueeze(0)  # [1, state_dim]
+        batch_state = raw_state.unsqueeze(0)  # [1, state_dim]
 
-        # Model Inference
+        # Model Inference (Normalizes internally and returns raw unnormalized action chunk)
         with torch.no_grad():
-            pred_chunk, _, _ = self.policy(batch_imgs, norm_state)
+            pred_chunk, _, _ = self.policy(batch_imgs, batch_state)
             pred_chunk = pred_chunk.squeeze(0)  # [chunk_size, action_dim]
 
         # Temporal Ensembling
         self.ensemble.update(current_t, pred_chunk)
-        norm_action = self.ensemble.get_action(current_t)
+        raw_action = self.ensemble.get_action(current_t)
 
-        # Unnormalize Action
-        unnorm_action = self.unnormalize_action(norm_action)
-
-        return unnorm_action.cpu().numpy()
+        return raw_action.cpu().numpy()

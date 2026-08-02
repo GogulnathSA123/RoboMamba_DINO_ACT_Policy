@@ -11,7 +11,7 @@ class DINOv2LeRobotDataset(Dataset):
     Features:
     - Loads multi-camera images (640x480x3) and resizes to 224x224 for DINOv2
     - ImageNet z-scoring normalization on images
-    - Per-channel state/action normalization (z-score)
+    - Retains state and action statistics from metadata for policy normalization
     - Episode-aware action chunking (pads at episode boundaries instead of crossing)
     """
 
@@ -65,39 +65,25 @@ class DINOv2LeRobotDataset(Dataset):
         return episode_ends
 
     def _compute_stats(self):
-        """Compute state and action mean/std statistics for normalization."""
-        all_states = []
-        all_actions = []
-
-        print("Computing state/action statistics across dataset...")
-        for item in self.dataset:
-            all_states.append(item["observation.state"])
-            all_actions.append(item["action"])
-
-        states_tensor = torch.stack([
-            s if isinstance(s, torch.Tensor) else torch.tensor(s, dtype=torch.float32)
-            for s in all_states
-        ])
-        actions_tensor = torch.stack([
-            a if isinstance(a, torch.Tensor) else torch.tensor(a, dtype=torch.float32)
-            for a in all_actions
-        ])
-
+        """Extract state and action mean/std statistics directly from dataset metadata for fast initialization."""
+        print("Extracting state/action statistics from dataset metadata...")
+        meta_stats = self.dataset.meta.stats
+        
+        state_mean = torch.tensor(meta_stats["observation.state"]["mean"], dtype=torch.float32)
+        state_std = torch.clamp(torch.tensor(meta_stats["observation.state"]["std"], dtype=torch.float32), min=1e-5)
+        
+        action_mean = torch.tensor(meta_stats["action"]["mean"], dtype=torch.float32)
+        action_std = torch.clamp(torch.tensor(meta_stats["action"]["std"], dtype=torch.float32), min=1e-5)
+        
         stats = {
-            "state_mean": states_tensor.mean(dim=0),
-            "state_std": torch.clamp(states_tensor.std(dim=0), min=1e-5),
-            "action_mean": actions_tensor.mean(dim=0),
-            "action_std": torch.clamp(actions_tensor.std(dim=0), min=1e-5),
+            "state_mean": state_mean,
+            "state_std": state_std,
+            "action_mean": action_mean,
+            "action_std": action_std,
         }
         print(f"State mean: {stats['state_mean']}")
         print(f"Action std: {stats['action_std']}")
         return stats
-
-    def normalize_state(self, state):
-        return (state - self.stats["state_mean"]) / self.stats["state_std"]
-
-    def unnormalize_action(self, action):
-        return action * self.stats["action_std"] + self.stats["action_mean"]
 
     def __len__(self):
         return len(self.dataset)
@@ -131,15 +117,14 @@ class DINOv2LeRobotDataset(Dataset):
 
         imgs_tensor = torch.stack(processed_imgs, dim=0)  # [N_cam, 3, 224, 224]
 
-        # --- Extract and Normalize State ---
+        # --- Extract Raw State ---
         state = item["observation.state"]
         if not isinstance(state, torch.Tensor):
             state = torch.tensor(state, dtype=torch.float32)
         else:
             state = state.float()
-        norm_state = self.normalize_state(state)
 
-        # --- Extract Episode-Safe Action Chunk [chunk_size, action_dim] ---
+        # --- Extract Episode-Safe Raw Action Chunk [chunk_size, action_dim] ---
         episode_end = self.episode_ends.get(idx, len(self.dataset) - 1)
         action_chunk = []
 
@@ -151,13 +136,12 @@ class DINOv2LeRobotDataset(Dataset):
                 act = torch.tensor(act, dtype=torch.float32)
             else:
                 act = act.float()
-            norm_act = (act - self.stats["action_mean"]) / self.stats["action_std"]
-            action_chunk.append(norm_act)
+            action_chunk.append(act)
 
         action_chunk_tensor = torch.stack(action_chunk, dim=0)  # [chunk_size, action_dim]
 
         return {
             "images": imgs_tensor,
-            "state": norm_state,
+            "state": state,
             "action": action_chunk_tensor,
         }
