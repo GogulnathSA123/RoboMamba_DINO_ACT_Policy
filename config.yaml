@@ -1,9 +1,9 @@
 # Configuration for DINOv2 + RoboMamba + ACT Policy Training
 
 dataset:
-  repo_id: "Gogul99/300_episode"
+  repo_id: "Gogul99/Robomamba_dino_act_record10"
   cameras:
-    - "observation.images.front"
+    - "observation.images.right"
     - "observation.images.wrist"
   state_key: "observation.state"
   action_key: "action"
@@ -11,20 +11,26 @@ dataset:
   model_input_size: [224, 224]    # Resized to 224x224 for DINOv2 ViT patch tokenization
 
 model:
-  dino_backbone: "dinov2_vits14"  # Options: dinov2_vits14 (small, fast), dinov2_vitb14 (base)
+  dino_backbone: "dinov2_vitb14"  # ViT-Base (768-dim features) optimized for RTX 5090 32GB VRAM
   freeze_dino: true              # Freeze DINOv2 backbone for fast training and low memory
-  d_model: 512                   # Mamba and ACT feature dimension
-  n_mamba_layers: 4              # Number of Mamba SSM layers
+  d_model: 768                   # Expanded Mamba and ACT feature dimension
+  n_mamba_layers: 6              # 6 Mamba SSM sequence encoding layers
   kl_weight: 10.0                # CVAE KL divergence weight
   chunk_size: 16                 # Action prediction horizon
   state_dim: 6                   # Arm state dimension (SO-101 joints)
   action_dim: 6                  # Action output dimension (SO-101 joints)
 
 training:
-  batch_size: 16
-  num_epochs: 200
-  learning_rate: 1.0e-4
+  batch_size: 64                 # Scaled up for 32GB VRAM GPU throughput
+  num_epochs: 775                # 775 epochs * 258 steps/epoch = ~200,000 gradient steps
+  learning_rate: 2.0e-4          # Scaled learning rate for batch_size=64
   weight_decay: 1.0e-4
-  num_workers: 4
+  num_workers: 8                 # Parallel data loading workers
   device: "cuda"
   save_dir: "checkpoints"
+
+hub:
+  push_to_hub: true
+  repo_id: "Gogul99/RoboMamba_DINO_ACT_Policy_Real"
+  private: false
+  keep_local_checkpoints: false   # Direct-to-Hub mode: delete local files after uploading

@@ -39,6 +39,10 @@ class DINOv2LeRobotDataset(Dataset):
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ])
 
+        # Pre-load all actions into RAM to eliminate video decoding disk I/O during chunk slicing
+        print("Pre-loading action trajectory array into memory...")
+        self.all_actions = torch.tensor(np.array(self.dataset.hf_dataset["action"]), dtype=torch.float32)
+
         self.stats = self._compute_stats()
 
     def _build_episode_index(self):
@@ -126,19 +130,8 @@ class DINOv2LeRobotDataset(Dataset):
 
         # --- Extract Episode-Safe Raw Action Chunk [chunk_size, action_dim] ---
         episode_end = self.episode_ends.get(idx, len(self.dataset) - 1)
-        action_chunk = []
-
-        for offset in range(self.chunk_size):
-            # Clamp to episode boundary (pad with last action if beyond end)
-            act_idx = min(idx + offset, episode_end)
-            act = self.dataset[act_idx]["action"]
-            if not isinstance(act, torch.Tensor):
-                act = torch.tensor(act, dtype=torch.float32)
-            else:
-                act = act.float()
-            action_chunk.append(act)
-
-        action_chunk_tensor = torch.stack(action_chunk, dim=0)  # [chunk_size, action_dim]
+        indices = [min(idx + offset, episode_end) for offset in range(self.chunk_size)]
+        action_chunk_tensor = self.all_actions[indices]
 
         return {
             "images": imgs_tensor,

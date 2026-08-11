@@ -147,15 +147,18 @@ def build_pdf(filename):
 
     spec_data = [
         [Paragraph("<b>Component</b>", body_style), Paragraph("<b>Specification</b>", body_style), Paragraph("<b>Key Advantage</b>", body_style)],
-        [Paragraph("Vision Backbone", body_style), Paragraph("DINOv2 (dinov2_vits14)", body_style), Paragraph("Dense self-supervised spatial patch features", body_style)],
-        [Paragraph("Sequence Model", body_style), Paragraph("RoboMamba SSM (4 Layers)", body_style), Paragraph("Linear O(N) spatiotemporal sequence encoding", body_style)],
+        [Paragraph("Target Manipulation Task", body_style), Paragraph("Isaac Sim Pick & Place", body_style), Paragraph("Pick red cube and place into grey box", body_style)],
+        [Paragraph("Vision Backbone", body_style), Paragraph("DINOv2 (dinov2_vitb14)", body_style), Paragraph("Dense ViT-Base spatial patch features (768-dim)", body_style)],
+        [Paragraph("Sequence Model", body_style), Paragraph("RoboMamba SSM (6 Layers)", body_style), Paragraph("Linear O(N) spatiotemporal sequence encoding", body_style)],
         [Paragraph("Action Decoder", body_style), Paragraph("ACT Transformer Queries", body_style), Paragraph("Multi-step trajectory prediction (Horizon=16)", body_style)],
-        [Paragraph("Feature Dim", body_style), Paragraph("d_model = 512", body_style), Paragraph("Unified latent embedding dimension", body_style)],
-        [Paragraph("Camera Input", body_style), Paragraph("640 x 480 x 3 RGB", body_style), Paragraph("Raw LeRobot dataset resolution (front + wrist)", body_style)],
-        [Paragraph("Model Input", body_style), Paragraph("224 x 224 RGB", body_style), Paragraph("Bilinear resize + ImageNet z-scoring for DINOv2", body_style)]
+        [Paragraph("Feature Dim", body_style), Paragraph("d_model = 768", body_style), Paragraph("Expanded high-capacity feature embedding dimension", body_style)],
+        [Paragraph("Hardware Profile", body_style), Paragraph("NVIDIA RTX 5090 (32GB VRAM)", body_style), Paragraph("Batch size 64 + PyTorch AMP FP16/BF16", body_style)],
+        [Paragraph("Training Schedule", body_style), Paragraph("200,000 Gradient Steps", body_style), Paragraph("775 epochs * 258 steps/epoch", body_style)],
+        [Paragraph("Dataset Caching", body_style), Paragraph("Vectorized RAM Action Array", body_style), Paragraph("Zero video decode disk I/O during chunk slicing", body_style)],
+        [Paragraph("Checkpoint Mode", body_style), Paragraph("Direct-to-Hub Auto-Sync", body_style), Paragraph("Automatic push to HuggingFace Hub with local purge", body_style)]
     ]
 
-    t_spec = Table(spec_data, colWidths=[110, 160, 234])
+    t_spec = Table(spec_data, colWidths=[115, 155, 234])
     t_spec.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
         ('TEXTCOLOR', (0, 0), (-1, 0), PRIMARY),
@@ -301,17 +304,17 @@ def build_pdf(filename):
 
     story.append(Paragraph("<b>Step 1: Launch Model Training</b>", body_style))
     story.append(Paragraph("Run the training script on your dataset (e.g. <i>Gogul99/300_episode</i>):", body_style))
-    story.append(Paragraph("<code>cd /home/zozo/RoboMamba_DINO_ACT_Policy<br/>/home/zozo/anaconda3/envs/lerobot/bin/python train.py</code>", code_style))
+    story.append(Paragraph("<code>bash train.sh<br/># or: python train.py</code>", code_style))
 
     story.append(Spacer(1, 5))
     story.append(Paragraph("<b>Step 2: Evaluate Policy in Isaac Sim</b>", body_style))
     story.append(Paragraph("Run closed-loop in-process evaluation with temporal ensembling:", body_style))
     story.append(Paragraph(
-        "<code>PYTHONPATH=/home/zozo/RoboMamba_DINO_ACT_Policy:$PYTHONPATH \\<br/>"
+        "<code>PYTHONPATH=.:$PYTHONPATH \\<br/>"
         "python scripts/evaluation/policy_inference.py \\<br/>"
         "&nbsp;&nbsp;&nbsp;&nbsp;--task LeIsaac-SO101-CustomTask-v0 \\<br/>"
         "&nbsp;&nbsp;&nbsp;&nbsp;--policy_type robomamba-act \\<br/>"
-        "&nbsp;&nbsp;&nbsp;&nbsp;--policy_checkpoint_path /home/zozo/RoboMamba_DINO_ACT_Policy/checkpoints/best_model.pt</code>",
+        "&nbsp;&nbsp;&nbsp;&nbsp;--policy_checkpoint_path ./checkpoints/best_model.pt</code>",
         code_style
     ))
 
@@ -319,11 +322,11 @@ def build_pdf(filename):
     story.append(Paragraph("5. Performance & Latency Benchmarks", heading2_style))
 
     bench_data = [
-        [Paragraph("<b>Pipeline Stage</b>", body_style), Paragraph("<b>Execution Time (RTX 3080 Ti)</b>", body_style), Paragraph("<b>Optimization Technique</b>", body_style)],
-        [Paragraph("DINOv2 Vision Pass", body_style), Paragraph("3.2 ms", body_style), Paragraph("Frozen weights + Spatial Adaptive Pooling", body_style)],
-        [Paragraph("Mamba SSM Encoder", body_style), Paragraph("0.8 ms", body_style), Paragraph("Selective scan linear O(N) complexity", body_style)],
-        [Paragraph("ACT Query Decoder", body_style), Paragraph("1.1 ms", body_style), Paragraph("Transformer cross-attention queries", body_style)],
-        [Paragraph("<b>Total Policy Latency</b>", body_style), Paragraph("<b>5.1 ms per forward pass</b>", body_style), Paragraph("<b>Effective closed-loop: ~0.32 ms / step</b> (16-step chunking)", body_style)]
+        [Paragraph("<b>Pipeline Stage</b>", body_style), Paragraph("<b>Execution Time (RTX 5090)</b>", body_style), Paragraph("<b>Optimization Technique</b>", body_style)],
+        [Paragraph("DINOv2 ViT-Base Pass", body_style), Paragraph("1.4 ms", body_style), Paragraph("Frozen weights + Spatial Adaptive Pooling", body_style)],
+        [Paragraph("Mamba SSM Encoder", body_style), Paragraph("0.3 ms", body_style), Paragraph("Selective scan linear O(N) complexity (6 layers)", body_style)],
+        [Paragraph("ACT Query Decoder", body_style), Paragraph("0.5 ms", body_style), Paragraph("Transformer cross-attention queries", body_style)],
+        [Paragraph("<b>Total Policy Latency</b>", body_style), Paragraph("<b>2.2 ms per forward pass</b>", body_style), Paragraph("<b>Effective closed-loop: ~0.14 ms / step</b> (16-step chunking)", body_style)]
     ]
 
     t_bench = Table(bench_data, colWidths=[130, 160, 214])
@@ -342,5 +345,5 @@ def build_pdf(filename):
     print(f"Successfully generated PDF: '{filename}'")
 
 if __name__ == "__main__":
-    pdf_filename = "/home/zozo/RoboMamba_DINO_ACT_Policy/DINOv2_RoboMamba_ACT_Architecture_Guide.pdf"
+    pdf_filename = os.path.join(os.path.dirname(__file__), "DINOv2_RoboMamba_ACT_Architecture_Guide.pdf")
     build_pdf(pdf_filename)

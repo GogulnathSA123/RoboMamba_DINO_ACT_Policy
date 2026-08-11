@@ -1,3 +1,4 @@
+import warnings
 import torch
 import torch.nn as nn
 
@@ -10,7 +11,9 @@ class DINOv2VisionBackbone(nn.Module):
         self.pool_spatial = pool_spatial
 
         print(f"Loading pre-trained DINOv2 backbone '{model_name}'...")
-        self.dinov2 = torch.hub.load("facebookresearch/dinov2", model_name)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=UserWarning, module=".*dinov2.*")
+            self.dinov2 = torch.hub.load("facebookresearch/dinov2", model_name)
         
         self.raw_embed_dim = self.dinov2.embed_dim  # 384 for ViT-Small, 768 for ViT-Base
 

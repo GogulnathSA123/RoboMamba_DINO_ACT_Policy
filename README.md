@@ -66,9 +66,9 @@ model:
 To evaluate the trained checkpoint in Isaac Sim:
 
 ```bash
-PYTHONPATH=/home/zozo/RoboMamba_DINO_ACT_Policy:$PYTHONPATH \
+PYTHONPATH=.:$PYTHONPATH \
 python scripts/evaluation/policy_inference.py \
     --task LeIsaac-SO101-CustomTask-v0 \
     --policy_type robomamba-act \
-    --policy_checkpoint_path /home/zozo/RoboMamba_DINO_ACT_Policy/checkpoints/best_model.pt
+    --policy_checkpoint_path ./checkpoints/best_model.pt
 ```
