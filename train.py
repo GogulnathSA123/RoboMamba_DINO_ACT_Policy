@@ -198,7 +198,7 @@ def train():
             torch.save(model.state_dict(), latest_path)
 
     except KeyboardInterrupt:
-        print("\n⚠️ Training interrupted by user (Ctrl+C). Preserving checkpoints and uploading to Hugging Face...")
+        print("\n Training interrupted by user (Ctrl+C). Preserving checkpoints and uploading to Hugging Face...")
 
     # 5. Push Checkpoints to Hugging Face Hub (if enabled in config.yaml)
     push_checkpoints_to_hub(cfg, save_dir)
@@ -244,9 +244,9 @@ def push_checkpoints_to_hub(cfg, save_dir):
                     repo_id=repo_id,
                     repo_type="model",
                 )
-        print(f"🎉 Checkpoints successfully uploaded to Hugging Face Hub: https://huggingface.co/{repo_id}")
+        print(f" Checkpoints successfully uploaded to Hugging Face Hub: https://huggingface.co/{repo_id}")
     except Exception as e:
-        print(f"⚠️ Warning: Failed to upload checkpoints to Hugging Face Hub: {e}")
+        print(f" Warning: Failed to upload checkpoints to Hugging Face Hub: {e}")
 
 if __name__ == "__main__":
     train()

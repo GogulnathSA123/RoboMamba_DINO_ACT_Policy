@@ -23,11 +23,13 @@ class DINOv2RoboMambaACTPolicy(nn.Module):
         action_dim=6,
         chunk_size=16,
         latent_dim=32,
+        pool_grid=4,
     ):
         super().__init__()
         self.chunk_size = chunk_size
         self.action_dim = action_dim
         self.latent_dim = latent_dim
+        self.pool_grid = pool_grid
 
         # Normalization buffers (filled before training, restored automatically from checkpoint)
         self.register_buffer("state_mean", torch.zeros(state_dim))
@@ -41,6 +43,7 @@ class DINOv2RoboMambaACTPolicy(nn.Module):
             d_model=d_model,
             freeze=freeze_dino,
             pool_spatial=True,
+            pool_grid=pool_grid,
         )
 
         # 2. Joint State Embedding (for Mamba sequence input)

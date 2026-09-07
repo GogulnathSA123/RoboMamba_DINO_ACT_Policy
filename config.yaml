@@ -33,4 +33,4 @@ hub:
   push_to_hub: true
   repo_id: "Gogul99/RoboMamba_DINO_ACT_Policy_Real"
   private: false
-  keep_local_checkpoints: false   # Direct-to-Hub mode: delete local files after uploading
+  keep_local_checkpoints: false   # Direct-to-Hub mode:

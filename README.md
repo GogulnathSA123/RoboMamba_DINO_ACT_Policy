@@ -1,74 +1,137 @@
-# DINOv2 + RoboMamba + ACT Policy Architecture
+# RoboMamba-DINO-ACT: Latency-Aware Visuomotor Policies for Robotic Manipulation: A Comparative Simulation and Physical Study on the SO-101 Arm
 
-A state-of-the-art imitation learning policy combining Meta AI's **DINOv2** self-supervised vision backbone, **RoboMamba** State Space Models (SSM) sequence encoder, and **ACT** Action Chunking Transformer decoder for high-precision robotic manipulation.
-
----
-
-## 🌟 Architecture Highlights
-
-1. **DINOv2 Vision Backbone (`dinov2_vits14`)**:
-   - Extract dense spatial patch features ($16 \times 16 = 256$ tokens per camera) pre-trained self-supervised on Meta's LVD-142M dataset.
-   - Superior geometric perception and zero-shot spatial localization compared to standard supervised ResNet backbones.
-
-2. **RoboMamba Sequence Encoder**:
-   - Linear $\mathcal{O}(N)$ complexity selective state-space model for efficient spatiotemporal sequence encoding.
-
-3. **ACT (Action Chunking Transformer)**:
-   - CVAE latent action distribution encoding + Transformer query decoding predicting multi-step action trajectories ($T=16$).
+This repository contains the complete implementation, training pipeline, and evaluation benchmarks for **RoboMamba-DINO-ACT**, evaluated on the 6-DoF SO-101 robotic arm in both physical hardware deployment and NVIDIA Isaac Sim.
 
 ---
 
-## 📁 Repository Structure
+##  Repository Structure
 
-```
+```text
 RoboMamba_DINO_ACT_Policy/
-├── config.yaml               # Training & model hyperparameters
-├── dataset/
-│   └── hf_dataset.py         # LeRobot HuggingFace dataset loader with ImageNet z-scoring & 224x224 resize
-├── models/
-│   ├── dino_backbone.py      # DINOv2 feature extractor with spatial patch pooling & projection
-│   ├── mamba_block.py        # RoboMamba State Space Model encoder layer
-│   ├── act_decoder.py        # CVAE Encoder & ACT Transformer Query Decoder
-│   └── policy.py             # Full unified DINOv2RoboMambaACTPolicy module
-├── train.py                  # Full PyTorch training loop with AdamW, Cosine LR, and checkpointing
-├── eval_leisaac.py           # Evaluation connector for Isaac Sim & hardware execution with temporal ensembling
-└── README.md
+── models/                         # Neural network architecture
+   ── dino_backbone.py            # Frozen DINOv2 (ViT-B/14) with 4x4 spatial pooling
+   ── mamba_block.py              # 6-layer selective state-space model (SSM) encoder
+   ── act_decoder.py              # Transformer action query decoder (K=16 steps)
+   ── policy.py                   # Unified RoboMamba-DINO-ACT policy
+── dataset/
+   ── hf_dataset.py               # Hugging Face / LeRobot dataset loading & caching
+── leisaac/                        # Isaac Sim simulation environment & tasks
+    ── source/                     # LeIsaac custom task environments & MDP configs
+    ─ scripts/evaluation/         # Simulation benchmark & latency evaluation
+    ── run_robomamba_dino_act.sh   # Single-episode / test execution launcher
+    ── run_latency_benchmark.sh    # Multi-seed 150-trial simulation benchmark runner
+── scripts/                        # Analysis, profiling & hyperparameter sweeps
+   ── benchmark_latency_reproducible.py # Modular CUDA PyTorch profiling harness
+── train.py                        # Model training pipeline
+── train.sh                        # Training launcher script
+── eval_leisaac.py                 # Isaac Sim policy connector
+── eval_real_so101.py              # Real robot SO-101 evaluation script
+── evaluate_realworld_benchmark.py # Live physical 10-trial benchmark harness
+── run_realworld_benchmark.sh      # Physical evaluation launcher
+── policy_server.py                # Asynchronous policy server for serial UART
+── robot_client.py                 # SO-101 robot arm control client
+── monitor_joints.py               # Hardware joint telemetry monitor
+── calibrate.sh                    # Feetech servo calibration script
+── config.yaml                     # Model hyperparameters & training configs
 ```
 
 ---
 
-## 🚀 Quick Start
+##  1. Real-World Physical Robot Benchmark (SO-101 Arm)
 
-### 1. Training
+The physical benchmark evaluates closed-loop pick-and-place success and per-step hardware latency on the 6-DoF SO-101 arm using dual USB cameras (`CAM_RIGHT=4`, `CAM_WRIST=6`) at 30 Hz.
 
-Run the training loop on HuggingFace dataset (e.g. `Gogul99/300_episode`):
-
+### Environment Setup:
 ```bash
-python train.py
+conda activate lerobot_libero
+cd /home/zozo/RoboMamba_DINO_ACT_Policy
 ```
 
-### 2. Configuration (`config.yaml`)
+### A. Run RoboMamba-DINO-ACT on the Physical Arm (10 Trials):
+```bash
+bash run_realworld_benchmark.sh robomamba 10 real
+```
+ Or invoke Python directly:
+```bash
+python evaluate_realworld_benchmark.py \
+    --policy robomamba \
+    --trials 10 \
+    --robot_port /dev/ttyACM0 \
+    --cam_right 4 \
+    --cam_wrist 6 \
+    --hz 30
+```
 
-Edit `config.yaml` to customize dataset, backbone, or training parameters:
+### B. Run Canonical ACT Baseline on the Physical Arm (10 Trials):
+```bash
+bash run_realworld_benchmark.sh act 10 real
+```
 
-```yaml
-model:
-  dino_backbone: "dinov2_vits14"  # Options: dinov2_vits14, dinov2_vitb14
-  freeze_dino: true              # Freeze DINOv2 backbone for fast training and low memory
-  d_model: 512                   # Mamba and ACT feature dimension
-  chunk_size: 16                 # Action prediction horizon
+### C. Mock Dry-Run (Without Physical Hardware Connected):
+To verify video capture, policy inference, and pipeline execution without connecting the robot arm:
+```bash
+bash run_realworld_benchmark.sh robomamba 3 mock
 ```
 
 ---
 
-## 🧪 Evaluation in Isaac Sim
+##  2. Simulation Benchmark (NVIDIA Isaac Sim)
 
-To evaluate the trained checkpoint in Isaac Sim:
+Simulation experiments run on the `LeIsaac-SO101-CustomTask-v0` tabletop environment under PhysX 5.0 dynamics across 3 independent random seeds (`42`, `100`, `2024`) with 50 trials per seed (150 trials total per model).
+
+### A. Full Multi-Seed Benchmark (Both Policies):
+Run the automated benchmark runner from within `leisaac/`:
+```bash
+cd /home/zozo/RoboMamba_DINO_ACT_Policy/leisaac
+
+# Run Seed 42 (50 trials for ACT + 50 trials for RoboMamba-DINO-ACT)
+bash run_latency_benchmark.sh --policy all --trials 50 --seed 42 --headless
+
+# Run Seed 100
+bash run_latency_benchmark.sh --policy all --trials 50 --seed 100 --headless
+
+# Run Seed 2024
+bash run_latency_benchmark.sh --policy all --trials 50 --seed 2024 --headless
+```
+
+### B. Run a Specific Policy Individually:
+* **RoboMamba-DINO-ACT in Isaac Sim:**
+  ```bash
+  bash run_latency_benchmark.sh --policy robomamba-dino --trials 50 --seed 42 --headless
+  ```
+* **ACT Baseline in Isaac Sim:**
+  ```bash
+  bash run_latency_benchmark.sh --policy act --trials 50 --seed 42 --headless
+  ```
+
+### C. Interactive GUI Rollout (Single Episode Visualization):
+To view the simulation rollout in the Isaac Sim GUI window:
+```bash
+cd /home/zozo/RoboMamba_DINO_ACT_Policy/leisaac
+bash run_robomamba_dino_act.sh --eval_rounds 1
+```
+
+---
+
+## 3. Modular GPU Inference Profiling
+
+To profile the standalone forward-pass latency of the DINOv2 vision backbone, 4x4 spatial pooling, and 6-layer Mamba SSM encoder on an NVIDIA RTX 3080/5090 using PyTorch CUDA events (`torch.cuda.Event`):
 
 ```bash
-PYTHONPATH=.:$PYTHONPATH \
-python scripts/evaluation/policy_inference.py \
-    --task LeIsaac-SO101-CustomTask-v0 \
-    --policy_type robomamba-act \
-    --policy_checkpoint_path ./checkpoints/best_model.pt
+cd /home/zozo/RoboMamba_DINO_ACT_Policy
+python scripts/benchmark_latency_reproducible.py --device cuda --num_runs 100
 ```
+
+---
+
+##  4. Training Pipeline
+
+To train RoboMamba-DINO-ACT from scratch on teleoperated demonstration datasets:
+
+```bash
+cd /home/zozo/RoboMamba_DINO_ACT_Policy
+bash train.sh
+# or:
+python train.py --config config.yaml
+```
+Training telemetry, L1 action reconstruction loss, and CVAE KL divergence regularization will log to Weights & Biases (`wandb`). Checkpoints save automatically to `checkpoints/`.

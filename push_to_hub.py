@@ -39,9 +39,9 @@ def main():
             print(f" -> Skipping '{local_path}' (file does not exist)")
 
     if uploaded_any:
-        print(f"\n🎉 Success! Your model checkpoint is live at: https://huggingface.co/{args.repo_id}")
+        print(f"\n Success! Your model checkpoint is live at: https://huggingface.co/{args.repo_id}")
     else:
-        print("\n❌ Error: No checkpoint files were found to upload. Please verify training ran successfully.")
+        print("\n Error: No checkpoint files were found to upload. Please verify training ran successfully.")
 
 if __name__ == "__main__":
     main()

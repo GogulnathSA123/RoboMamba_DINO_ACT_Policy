@@ -5,12 +5,13 @@ import torch.nn as nn
 class DINOv2VisionBackbone(nn.Module):
     """Pre-trained DINOv2 visual backbone for dense spatial patch representation."""
 
-    def __init__(self, model_name="dinov2_vits14", d_model=512, freeze=True, pool_spatial=True):
+    def __init__(self, model_name="dinov2_vits14", d_model=512, freeze=True, pool_spatial=True, pool_grid=4):
         super().__init__()
         self.model_name = model_name
         self.pool_spatial = pool_spatial
+        self.pool_grid = pool_grid
 
-        print(f"Loading pre-trained DINOv2 backbone '{model_name}'...")
+        print(f"Loading pre-trained DINOv2 backbone '{model_name}' with pool_grid={pool_grid}...")
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=UserWarning, module=".*dinov2.*")
             self.dinov2 = torch.hub.load("facebookresearch/dinov2", model_name)
@@ -44,13 +45,14 @@ class DINOv2VisionBackbone(nn.Module):
         # Extract patch tokens: [B * N_cams, 256, Embed_Dim]
         patch_tokens = features["x_norm_patchtokens"]
 
-        if self.pool_spatial:
-            # Spatial pooling (16x16 grid -> 4x4 grid) to optimize Mamba sequence latency
+        if self.pool_spatial and self.pool_grid is not None and self.pool_grid < 16:
+            # Spatial pooling (16x16 grid -> pool_grid x pool_grid)
             B_N, N_patches, E = patch_tokens.shape
             grid_size = int(N_patches ** 0.5)  # 16 for 224x224 input
             patches_2d = patch_tokens.view(B_N, grid_size, grid_size, E).permute(0, 3, 1, 2)
-            pooled_2d = nn.functional.adaptive_avg_pool2d(patches_2d, (4, 4))  # 16 tokens per cam
-            tokens = pooled_2d.permute(0, 2, 3, 1).reshape(B_N, 16, E)
+            pooled_2d = nn.functional.adaptive_avg_pool2d(patches_2d, (self.pool_grid, self.pool_grid))
+            num_tokens = self.pool_grid * self.pool_grid
+            tokens = pooled_2d.permute(0, 2, 3, 1).reshape(B_N, num_tokens, E)
         else:
             tokens = patch_tokens
 
