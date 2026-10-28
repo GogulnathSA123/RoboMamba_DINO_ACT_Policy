@@ -2,6 +2,7 @@
 
 dataset:
   repo_id: "Gogul99/Robomamba_dino_act_record10"
+  revision: "main"
   cameras:
     - "observation.images.right"
     - "observation.images.wrist"

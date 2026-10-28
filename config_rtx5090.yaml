@@ -6,6 +6,7 @@
 
 dataset:
   repo_id: "rocochallenge2025/ecm2027_sim_data"
+  revision: "main"
   cameras:
     - "observation.images.first_person_camera_rgb" # Head stereo cleanroom view
     - "observation.images.left_hand_camera_rgb"    # Left wrist eye-in-hand

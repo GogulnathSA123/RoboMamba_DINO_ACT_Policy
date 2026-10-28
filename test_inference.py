@@ -55,16 +55,18 @@ def test_inference(config_path="config_rtx5090.yaml", checkpoint_path="checkpoin
     # 5. Benchmark inference latency
     print("\nWarmup forward pass...")
     with torch.no_grad():
-        for _ in range(5):
+        for _ in range(2 if device.type == "cpu" else 5):
             _ = model(dummy_images, dummy_state)
 
-    print("Timing 50 forward passes...")
+    num_passes = 3 if device.type == "cpu" else 50
+    print(f"Timing {num_passes} forward passes...")
     start_time = time.time()
     with torch.no_grad():
-        for _ in range(50):
-            action_chunk = model(dummy_images, dummy_state)
-    elapsed = (time.time() - start_time) / 50.0
+        for _ in range(num_passes):
+            out = model(dummy_images, dummy_state)
+    elapsed = (time.time() - start_time) / num_passes
 
+    action_chunk = out[0] if isinstance(out, tuple) else out
     print(f"\n✓ Forward pass successful!")
     print(f"  Action chunk output shape: {action_chunk.shape} (Expected: [1, {cfg['model']['chunk_size']}, {cfg['model']['action_dim']}])")
     print(f"  Average inference latency: {elapsed * 1000.0:.2f} ms ({1.0 / elapsed:.1f} FPS)")

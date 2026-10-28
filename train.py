@@ -1,6 +1,7 @@
 import os
 import time
 import yaml
+import argparse
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -95,7 +96,16 @@ def create_dimension_error_bar_plot(per_dim_l1):
 
 def train():
     # Load configuration
-    cfg_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+    parser = argparse.ArgumentParser(description="RoboMamba + DINOv2 + ACT Policy Training")
+    default_cfg = "config_rtx5090.yaml" if os.path.exists(os.path.join(os.path.dirname(__file__), "config_rtx5090.yaml")) else "config.yaml"
+    parser.add_argument("--config", type=str, default=default_cfg, help="Path to YAML config file")
+    args, unknown = parser.parse_known_args()
+
+    cfg_path = args.config
+    if not os.path.isabs(cfg_path):
+        cfg_path = os.path.join(os.path.dirname(__file__), cfg_path)
+
+    print(f"Loading configuration from: {cfg_path}")
     with open(cfg_path, "r") as f:
         cfg = yaml.safe_load(f)
 
@@ -123,10 +133,12 @@ def train():
     wandb.define_metric("plots/*", step_metric="epoch")
 
     # 1. Dataset & DataLoader (yields raw, unnormalized data)
+    revision = cfg["dataset"].get("revision", "main")
     dataset = DINOv2LeRobotDataset(
         repo_id=cfg["dataset"]["repo_id"],
         camera_keys=cfg["dataset"]["cameras"],
         chunk_size=cfg["model"]["chunk_size"],
+        revision=revision,
     )
 
     dataloader = DataLoader(

@@ -15,19 +15,24 @@ class DINOv2LeRobotDataset(Dataset):
     - Episode-aware action chunking (pads at episode boundaries instead of crossing)
     """
 
-    def __init__(self, repo_id="Gogul99/300_episode", camera_keys=None, chunk_size=16):
+    def __init__(self, repo_id="rocochallenge2025/ecm2027_sim_data", camera_keys=None, chunk_size=16, revision="main"):
         super().__init__()
         self.repo_id = repo_id
         self.chunk_size = chunk_size
+        self.revision = revision
 
         # Default camera keys if not provided
         if camera_keys is None:
-            self.camera_keys = ["observation.images.front", "observation.images.wrist"]
+            self.camera_keys = [
+                "observation.images.first_person_camera_rgb",
+                "observation.images.left_hand_camera_rgb",
+                "observation.images.right_hand_camera_rgb",
+            ]
         else:
             self.camera_keys = camera_keys
 
-        print(f"Loading LeRobot dataset '{repo_id}' from HuggingFace...")
-        self.dataset = LeRobotDataset(repo_id)
+        print(f"Loading LeRobot dataset '{repo_id}' (revision='{revision}') from HuggingFace...")
+        self.dataset = LeRobotDataset(repo_id, revision=revision)
 
         # Build episode boundary index for safe action chunking
         self.episode_ends = self._build_episode_index()
@@ -49,8 +54,8 @@ class DINOv2LeRobotDataset(Dataset):
         """Build a mapping from each sample index to its episode's last valid index."""
         episode_ends = {}
         try:
-            # LeRobot v2 datasets have episode_index metadata
-            episodes = self.dataset.hf_dataset["episode_index"]
+            # LeRobot v2/v3 datasets have episode_index metadata
+            episodes = [x.item() if hasattr(x, "item") else int(x) for x in self.dataset.hf_dataset["episode_index"]]
             current_ep = episodes[0]
             ep_start = 0
             for i in range(len(episodes)):
