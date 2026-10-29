@@ -6,6 +6,7 @@ Tests model loading, forward inference speed, and action output shapes for the S
 import os
 import time
 import yaml
+import argparse
 import torch
 from models.policy import DINOv2RoboMambaACTPolicy
 
@@ -72,4 +73,9 @@ def test_inference(config_path="config_rtx5090.yaml", checkpoint_path="checkpoin
     print(f"  Average inference latency: {elapsed * 1000.0:.2f} ms ({1.0 / elapsed:.1f} FPS)")
 
 if __name__ == "__main__":
-    test_inference()
+    parser = argparse.ArgumentParser(description="Test RoboMamba-DINO-ACT Policy Inference")
+    parser.add_argument("--config", type=str, default="config_rtx5090.yaml", help="Path to YAML configuration")
+    parser.add_argument("--checkpoint", type=str, default="checkpoints/ecm2027_rtx5090/best_model.pt", help="Path to checkpoint weights (.pt)")
+    args = parser.parse_args()
+
+    test_inference(config_path=args.config, checkpoint_path=args.checkpoint)
