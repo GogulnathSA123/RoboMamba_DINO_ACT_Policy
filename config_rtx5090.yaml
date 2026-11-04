@@ -32,6 +32,12 @@ model:
   state_dim: 77                                  # Full proprioception (base + dual arms + grippers)
   action_dim: 20                                 # Bimanual differential IK / joint deltas + grippers
 
+gripper:
+  convention: "simpler"                          # Simulator mapping: -1.0 for closed, +1.0 for open
+  threshold: 0.5                                 # Policy activation boundary for grasp initiation
+  stickiness_steps: 8                            # Holds grasp securely during lifting & trajectory execution
+  indices: [12, 13]                              # Dual-arm left & right gripper channel indices
+
 training:
   # --- RTX 5090 Throughput Optimization ---
   batch_size: 64                                 # Fits comfortably within ~18-22GB of 32GB VRAM

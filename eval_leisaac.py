@@ -5,19 +5,81 @@ import numpy as np
 
 from models.policy import DINOv2RoboMambaACTPolicy
 
-class TemporalEnsembleBuffer:
-    """Temporal ensembling buffer for smooth action trajectory execution."""
+class StickyGripperHandler:
+    """
+    Maintains firm gripper grasp latching and handles polarity remapping.
+    Prevents physical slippage during lift & pull phases by holding the closed state
+    for a configurable number of timesteps (stickiness_steps) once triggered.
+    """
 
-    def __init__(self, action_dim=6, chunk_size=16, k=0.01):
+    def __init__(
+        self,
+        stickiness_steps: int = 8,
+        threshold: float = 0.5,
+        convention: str = "simpler",
+    ):
+        self.stickiness_steps = stickiness_steps
+        self.threshold = threshold
+        self.convention = convention.lower()
+        self.sticky_counters = {}
+        self.last_states = {}
+
+    def reset(self) -> None:
+        self.sticky_counters.clear()
+        self.last_states.clear()
+
+    def process(self, gripper_idx: int, raw_val: float) -> float:
+        if gripper_idx not in self.sticky_counters:
+            self.sticky_counters[gripper_idx] = 0
+            self.last_states[gripper_idx] = 1.0  # Open by default
+
+        wants_close = float(raw_val) > self.threshold
+
+        if wants_close:
+            self.sticky_counters[gripper_idx] = self.stickiness_steps
+            self.last_states[gripper_idx] = -1.0  # Internal representation: -1 is closed
+        else:
+            if self.sticky_counters[gripper_idx] > 0:
+                self.sticky_counters[gripper_idx] -= 1
+                self.last_states[gripper_idx] = -1.0  # Held sticky closed
+            else:
+                self.last_states[gripper_idx] = 1.0   # Open
+
+        if self.convention in ["simpler", "isaaclab"]:
+            return self.last_states[gripper_idx]
+        elif self.convention == "droid":
+            return 1.0 if self.last_states[gripper_idx] < 0 else 0.0
+        elif self.convention in ["binary_zero_one", "unit_zero_one"]:
+            return 0.0 if self.last_states[gripper_idx] < 0 else 1.0
+        else:
+            return self.last_states[gripper_idx]
+
+
+class TemporalEnsembleBuffer:
+    """
+    Decoupled Temporal Ensembling Buffer:
+    - Smooth exponential decay ensembling for continuous arm joints / deltas.
+    - Decoupled gripper channel to preserve crisp discrete open/close transitions.
+    """
+
+    def __init__(self, action_dim=6, chunk_size=16, k=0.01, gripper_indices=None):
         self.action_dim = action_dim
         self.chunk_size = chunk_size
         self.k = k
         self.predictions = {}
+        self.latest_chunk = None
+
+        if gripper_indices is not None:
+            self.gripper_indices = set(gripper_indices)
+        else:
+            self.gripper_indices = {action_dim - 1}
 
     def reset(self):
         self.predictions.clear()
+        self.latest_chunk = None
 
     def update(self, current_t, pred_chunk):
+        self.latest_chunk = pred_chunk
         for offset in range(self.chunk_size):
             t = current_t + offset
             if t not in self.predictions:
@@ -43,6 +105,12 @@ class TemporalEnsembleBuffer:
 
         actions_tensor = torch.stack(actions)
         weighted_action = (actions_tensor * torch.tensor(weights, device=actions_tensor.device).unsqueeze(1)).sum(dim=0)
+
+        # Keep gripper channels unblurred by taking immediate prediction from latest chunk
+        if self.latest_chunk is not None:
+            for g_idx in self.gripper_indices:
+                weighted_action[g_idx] = self.latest_chunk[0, g_idx]
+
         return weighted_action
 
 
@@ -105,13 +173,30 @@ class DINOv2PolicyConnector:
         else:
             print(f"Warning: Checkpoint '{checkpoint_path}' not found! Policy running with random weights.")
 
+        gripper_cfg = self.cfg.get("gripper", {})
+        stickiness_steps = gripper_cfg.get("stickiness_steps", 8)
+        threshold = gripper_cfg.get("threshold", 0.5)
+        convention = gripper_cfg.get("convention", "simpler")
+
+        act_dim = self.cfg["model"]["action_dim"]
+        self.gripper_indices = gripper_cfg.get("indices", [act_dim - 1])
+
+        self.gripper_handler = StickyGripperHandler(
+            stickiness_steps=stickiness_steps,
+            threshold=threshold,
+            convention=convention,
+        )
+
         self.ensemble = TemporalEnsembleBuffer(
-            action_dim=self.cfg["model"]["action_dim"],
+            action_dim=act_dim,
             chunk_size=self.cfg["model"]["chunk_size"],
+            gripper_indices=self.gripper_indices,
         )
 
     def reset(self):
         self.ensemble.reset()
+        if hasattr(self, "gripper_handler"):
+            self.gripper_handler.reset()
 
     def get_action(self, current_t, raw_images, raw_state):
         """
@@ -166,4 +251,11 @@ class DINOv2PolicyConnector:
         self.ensemble.update(current_t, pred_chunk)
         raw_action = self.ensemble.get_action(current_t)
 
-        return raw_action.cpu().numpy()
+        action_np = raw_action.cpu().numpy() if torch.is_tensor(raw_action) else np.array(raw_action)
+
+        # Process gripper channels with sticky grasping & polarity remapping
+        if hasattr(self, "gripper_handler"):
+            for g_idx in self.gripper_indices:
+                action_np[g_idx] = self.gripper_handler.process(g_idx, action_np[g_idx])
+
+        return action_np.astype(np.float32)
